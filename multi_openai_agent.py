@@ -8,7 +8,9 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from openai.types.responses import ResponseTextDeltaEvent
-from agents import Agent, Runner , handoff
+from agents import Agent, Runner , handoff, HandoffInputData
+from agents.extensions import handoff_filters
+
 from datetime import datetime
 from contextvars import ContextVar
 from typing import Optional
@@ -264,54 +266,52 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 
+def handoff_message_filter(handoff_message_data: HandoffInputData) -> HandoffInputData:
+    """Example handoff message filter that removes tool-related messages and first two history items."""
+    _tool_marker_nowait("transfer_to_email_assistant")
+    # First, we'll remove any tool-related messages from the message history
+    handoff_message_data = handoff_filters.remove_all_tools(handoff_message_data)
+
+    history = (
+        tuple(handoff_message_data.input_history)
+        if isinstance(handoff_message_data.input_history, tuple)
+        else handoff_message_data.input_history
+    )
+
+    # or, you can use the HandoffInputData.clone(kwargs) method
+    return HandoffInputData(
+        input_history=history,
+        pre_handoff_items=tuple(handoff_message_data.pre_handoff_items),
+        new_items=tuple(handoff_message_data.new_items),
+    )
 
 async def stream_agent_response(user_input: str, max_turns: int = 30):
     """Async generator yielding both model deltas and tool markers (<tools>name</tools>)."""
     
+    # https://openai.github.io/openai-agents-python/handoffs/
+    # https://github.com/openai/openai-agents-python/tree/main/examples/handoffs
+    # 這裡的 handoff 是在主 Agent 裡面呼叫另一個 Agent
+    # 當主 Agent 判斷使用者有需要寄email的需求時,
     emailagent = Agent(
         name="Email Assistant",
+        handoff_description="你是一個Email助理, 你可以協助寄email給對方。",
         instructions="""請訊息送件人的email, 然後將內容送給對方，副本給自己。
         """,
         model=OpenAIChatCompletionsModel(model=MODEL_NAME, openai_client=client), 
         tools=[get_email_list, send_email],
     )
-
-    # https://openai.github.io/openai-agents-python/handoffs/
-    # https://github.com/openai/openai-agents-python/tree/main/examples/handoffs
-    # 這裡的 handoff 是在主 Agent 裡面呼叫另一個 Agent
-    # 當主 Agent 判斷使用者有需要寄email的需求時,
-    #     Handoff inputs
-    # In certain situations, you want the LLM to provide some data when it calls a handoff. For example, imagine a handoff to an "Escalation agent". You might want a reason to be provided, so you can log it.
-
-
-    # from pydantic import BaseModel
-
-    # from agents import Agent, handoff, RunContextWrapper
-
-    # class EscalationData(BaseModel):
-    #     reason: str
-
-    # async def on_handoff(ctx: RunContextWrapper[None], input_data: EscalationData):
-    #     print(f"Escalation agent called with reason: {input_data.reason}")
-
-    # agent = Agent(name="Escalation agent")
-
-    # handoff_obj = handoff(
-    #     agent=agent,
-    #     on_handoff=on_handoff,
-    #     input_type=EscalationData,
-    # )
+    
     agent = Agent(
         name="Entrance Assistant",
         instructions="""You only respond in 繁體中文. 查詢前，請先確認目前時間。
         數學相關符號與數學式請一律包含 $$...$$ 來輸出。
         請記得使用者輸入的步驟，請拆分todos逐一處理，確認每個步驟皆完成。
         如果是查詢請用google_search_pse_with_contents工具來查詢並回覆結果.
-        如果是使用者有需要寄email的需求時, 你可以handoffs給emailagent來達成寄信的目的.
+        如果是使用者有需要寄email的需求時, 你可以transfer_to_email_assistant來達成寄信的目的.
         """,
         model=OpenAIChatCompletionsModel(model=MODEL_NAME, openai_client=client),
         tools=[get_current_time, google_search_pse_with_contents],
-        handoffs=[emailagent],
+        handoffs=[handoff(emailagent, input_filter=handoff_message_filter)],
     )
 
     
