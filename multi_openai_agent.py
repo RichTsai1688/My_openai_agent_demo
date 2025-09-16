@@ -277,6 +277,7 @@ async def stream_agent_response(user_input: str, max_turns: int = 30):
     )
 
     # https://openai.github.io/openai-agents-python/handoffs/
+    # https://github.com/openai/openai-agents-python/tree/main/examples/handoffs
     # 這裡的 handoff 是在主 Agent 裡面呼叫另一個 Agent
     # 當主 Agent 判斷使用者有需要寄email的需求時,
     #     Handoff inputs
